@@ -67,6 +67,16 @@ namespace HbAi.XboxDns
             Directory.CreateDirectory(Path.GetDirectoryName(CustomFile));
             using (var w = new StreamWriter(CustomFile, true)) w.WriteLine(string.Join("|", name.Trim(), string.Join(",", v4), string.Join(",", v6), (site ?? "").Trim()));
         }
+        public static int AddCustom(string name, string[] v4, string[] v6, string site)
+        {
+            Name = Name.Concat(new[] { name.Trim() }).ToArray();
+            Short = Short.Concat(new[] { name.Trim().Length > 10 ? name.Trim().Substring(0, 10) : name.Trim() }).ToArray();
+            V4 = V4.Concat(new[] { v4 }).ToArray(); V6 = V6.Concat(new[] { v6 }).ToArray();
+            Opens = Opens.Concat(new[] { "пользовательский DNS" }).ToArray();
+            Site = Site.Concat(new[] { (site ?? "").Trim() }).ToArray();
+            Url = Url.Concat(new[] { string.IsNullOrWhiteSpace(site) ? "https://github.com/sevasmatras-star/hb-ai-smart-dns" : "https://" + site.Trim() }).ToArray();
+            return Count - 1;
+        }
         // Адреса из прежних версий. Старый xbox-dns.ru (1.0) — тот же сервис для Xbox.
         // Российский узел GeoHide (1.1) и Astracat (1.2–1.21) из России нейросети не открывают: если они стоят,
         // программа не выдаёт их за рабочий сервис, а предлагает нажать кнопку и поставить рабочие адреса.
@@ -466,7 +476,7 @@ namespace HbAi.XboxDns
 
     class MainForm : Form
     {
-        internal const string Version = "1.22";   // та же версия в app.manifest (1.2.2.0) и в первой строке файла
+        internal const string Version = "1.24";   // та же версия в app.manifest (1.2.4.0) и в первой строке файла
         static readonly Color Bg = Color.FromArgb(7, 7, 11);
         static readonly Color Violet = Color.FromArgb(140, 112, 255);
         static readonly Color Yellow = Color.FromArgb(255, 224, 102);
@@ -489,7 +499,7 @@ namespace HbAi.XboxDns
         int dnsSet;
         string error;
         float pulse;
-        Rectangle rToggle, rClose, rMin, rSite, rGroup, rBrand, rVk, rCheck, rBest;
+        Rectangle rToggle, rClose, rMin, rSite, rGroup, rBrand, rVk, rCheck, rBest, rAdd;
         readonly Rectangle[] rSeg = new Rectangle[32];
         string[] check; int checkSet = -1; bool checking; string bestNote;
         // окно тянется, только если кнопку мыши нажали на пустом месте
@@ -528,14 +538,20 @@ namespace HbAi.XboxDns
             // о новой версии узнаём в фоне; при снимке окна (--shot) в сеть не ходим
             if (ForceScale <= 0)
                 ThreadPool.QueueUserWorkItem(_ => { string v = Updates.Newer(Version); if (v != null) Ui(() => { update = v; Invalidate(); }); });
-            int segW = (LW - 56) / Dns.Count;
-            for (int k = 0; k < Dns.Count; k++) rSeg[k] = new Rectangle(28 + k * segW, 500, segW, 56);
+            LayoutSets();
             MouseDown += OnDown;
             MouseMove += OnMove;
             MouseUp += (s, e) => dragging = false;
         }
 
         Rectangle rToggleGlow() { var r = rToggle; r.Inflate(40, 40); return r; }
+
+        void LayoutSets()
+        {
+            int segW = (LW - 56 - 88) / Dns.Count;
+            for (int k = 0; k < Dns.Count; k++) rSeg[k] = new Rectangle(28 + k * segW, 500, segW, 56);
+            rAdd = new Rectangle(LW - 28 - 80, 513, 72, 30);
+        }
 
         protected override void Dispose(bool disposing)
         {
@@ -728,6 +744,7 @@ namespace HbAi.XboxDns
                 using (var b = new SolidBrush(on ? Ink : Soft))
                     g.DrawString(Dns.Short[k], f, b, sr, Center);
             }
+            DrawSmall(g, rAdd, "+ DNS", true);
         }
 
         // карточка проверки: адреса, кнопки и что открывается через выбранный сервис
@@ -869,6 +886,7 @@ namespace HbAi.XboxDns
             if (rMin.Contains(lp)) { WindowState = FormWindowState.Minimized; return; }
             if (rGroup.Contains(lp)) { Open("https://vk.com/neiroseti_ai"); return; }
             if (rSite.Contains(lp)) { Open(Dns.Url[dnsSet]); return; }
+            if (rAdd.Contains(lp)) { AddCustomDns(); return; }
             if (rVk.Contains(lp) && update != null) { Open(Updates.Page); return; }
             if (rBrand.Contains(lp) || rVk.Contains(lp)) { Open("https://vk.com/neiroseti_ai"); return; }
             if (InToggle(lp)) { Toggle(); return; }
@@ -886,14 +904,15 @@ namespace HbAi.XboxDns
             {
                 var name = Field(f, "Название", "Мой DNS", 15); var v4 = Field(f, "IPv4 (через запятую)", "1.1.1.1, 1.0.0.1", 55);
                 var v6 = Field(f, "IPv6 (необязательно)", "", 95); var site = Field(f, "Сайт (необязательно)", "example.com", 135);
-                var hint = new Label { Text = "ПКМ по списку DNS — добавить ещё один набор", AutoSize = true, Left = 15, Top = 175, ForeColor = Color.DimGray };
+                var hint = new Label { Text = "Новый DNS сразу появится в списке и проверках", AutoSize = true, Left = 15, Top = 175, ForeColor = Color.DimGray };
                 var ok = new Button { Text = "Добавить", DialogResult = DialogResult.OK, Left = 235, Top = 200, Width = 80 }; var cancel = new Button { Text = "Отмена", DialogResult = DialogResult.Cancel, Left = 325, Top = 200, Width = 75 };
                 f.Controls.AddRange(new Control[] { hint, ok, cancel }); f.AcceptButton = ok; f.CancelButton = cancel;
                 if (f.ShowDialog(this) != DialogResult.OK) return;
                 var a4 = v4.Text.Split(',').Select(x => x.Trim()).Where(x => x.Length > 0).ToArray();
                 var a6 = v6.Text.Split(',').Select(x => x.Trim()).Where(x => x.Length > 0).ToArray();
                 if (name.Text.Trim().Length == 0 || a4.Length == 0) { MessageBox.Show(this, "Укажите название и хотя бы один IPv4-адрес.", "DNS", MessageBoxButtons.OK, MessageBoxIcon.Warning); return; }
-                Dns.SaveCustom(name.Text, a4, a6, site.Text); MessageBox.Show(this, "DNS добавлен. Перезапустите приложение, чтобы он появился в списке.", "DNS", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                Dns.SaveCustom(name.Text, a4, a6, site.Text);
+                dnsSet = Dns.AddCustom(name.Text, a4, a6, site.Text); LayoutSets(); Invalidate();
             }
         }
 
@@ -919,7 +938,7 @@ namespace HbAi.XboxDns
 
         bool OverControl(Point lp)
         {
-            return InToggle(lp) || rSeg.Any(r => r.Contains(lp))
+            return InToggle(lp) || rAdd.Contains(lp) || rSeg.Take(Dns.Count).Any(r => r.Contains(lp))
                 || new[] { rClose, rMin, rGroup, rSite, rBrand, rVk, rCheck, rBest }.Any(r => r.Contains(lp));
         }
 
