@@ -24,25 +24,49 @@ namespace HbAi.XboxDns
         // кроме Gemini (капча Google). Astracat (135.106.217.200, 85.209.2.112) не отвечает — убран в 1.22.
         // Российские узлы GeoHide (159.194.200.33, 193.233.112.x) отвечают, но их прокси из России не открываются.
         // xbox-dns.ru с 10.10.2026 на нейросети отвечает 0.0.0.0, оставлен только для Xbox Live.
-        public static readonly string[] Name = { "Comss.one", "GeoHide EU", "MagicDNS", "Xbox DNS" };
-        public static readonly string[] Short = { "Comss", "GeoHide", "MagicDNS", "Xbox" };
-        public static readonly string[][] V4 = {
+        public static string[] Name = { "Comss.one", "GeoHide EU", "MagicDNS", "Xbox DNS" };
+        public static string[] Short = { "Comss", "GeoHide", "MagicDNS", "Xbox" };
+        public static string[][] V4 = {
             new[] { "94.250.253.55", "212.109.195.93" },
             new[] { "143.20.64.192", "45.13.237.213" },
             new[] { "109.120.132.43", "94.249.177.102" },
             new[] { "111.88.96.54", "111.88.96.55" } };
-        public static readonly string[][] V6 = {
+        public static string[][] V6 = {
             new string[0], new string[0], new string[0],
             new[] { "2a00:ab00:1233:26::50", "2a00:ab00:1233:26::51" } };
-        public static readonly string[] Opens = {
+        public static string[] Opens = {
             "ChatGPT, Claude, Gemini, ElevenLabs, Grok, Perplexity",
             "ChatGPT, Claude, ElevenLabs, Grok, Perplexity; Gemini — через раз",
             "ChatGPT, Claude, Gemini, ElevenLabs, Grok, Perplexity",
             "только Xbox Live, нейросети — нет" };
-        public static readonly string[] Site = { "comss.ru", "geohide.ru", "magicdns.ru", "xbox-dns.ru" };
-        public static readonly string[] Url = { "https://www.comss.ru/", "https://geohide.ru/", "https://magicdns.ru/", "https://xbox-dns.ru/" };
+        public static string[] Site = { "comss.ru", "geohide.ru", "magicdns.ru", "xbox-dns.ru" };
+        public static string[] Url = { "https://www.comss.ru/", "https://geohide.ru/", "https://magicdns.ru/", "https://xbox-dns.ru/" };
         public static int Count { get { return Name.Length; } }
         public const int XboxSet = 3;
+        public static readonly string CustomFile = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "HB AI Smart DNS", "custom-dns.txt");
+
+        // Формат строки: название|IPv4 через запятую|IPv6 через запятую|сайт (последнее можно оставить пустым).
+        public static void LoadCustom()
+        {
+            if (!File.Exists(CustomFile)) return;
+            var names = Name.ToList(); var shorts = Short.ToList(); var v4 = V4.ToList(); var v6 = V6.ToList();
+            var opens = Opens.ToList(); var sites = Site.ToList(); var urls = Url.ToList();
+            foreach (var line in File.ReadAllLines(CustomFile))
+            {
+                var p = line.Split(new[] { '|' }, 4); if (p.Length < 2) continue;
+                var a4 = p[1].Split(',').Select(x => x.Trim()).Where(x => x.Length > 0).ToArray();
+                var a6 = p.Length > 2 ? p[2].Split(',').Select(x => x.Trim()).Where(x => x.Length > 0).ToArray() : new string[0];
+                if (p[0].Trim().Length == 0 || a4.Length == 0) continue;
+                names.Add(p[0].Trim()); shorts.Add(p[0].Trim().Length > 10 ? p[0].Trim().Substring(0, 10) : p[0].Trim()); v4.Add(a4); v6.Add(a6);
+                opens.Add("пользовательский DNS"); var site = p.Length > 3 ? p[3].Trim() : ""; sites.Add(site); urls.Add(site.Length == 0 ? "https://github.com/neiroseti-ai/hb-ai-xbox-dns" : "https://" + site);
+            }
+            Name = names.ToArray(); Short = shorts.ToArray(); V4 = v4.ToArray(); V6 = v6.ToArray(); Opens = opens.ToArray(); Site = sites.ToArray(); Url = urls.ToArray();
+        }
+        public static void SaveCustom(string name, string[] v4, string[] v6, string site)
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(CustomFile));
+            using (var w = new StreamWriter(CustomFile, true)) w.WriteLine(string.Join("|", name.Trim(), string.Join(",", v4), string.Join(",", v6), (site ?? "").Trim()));
+        }
         // Адреса из прежних версий. Старый xbox-dns.ru (1.0) — тот же сервис для Xbox.
         // Российский узел GeoHide (1.1) и Astracat (1.2–1.21) из России нейросети не открывают: если они стоят,
         // программа не выдаёт их за рабочий сервис, а предлагает нажать кнопку и поставить рабочие адреса.
@@ -466,7 +490,7 @@ namespace HbAi.XboxDns
         string error;
         float pulse;
         Rectangle rToggle, rClose, rMin, rSite, rGroup, rBrand, rVk, rCheck, rBest;
-        readonly Rectangle[] rSeg = new Rectangle[Dns.Count];
+        readonly Rectangle[] rSeg = new Rectangle[32];
         string[] check; int checkSet = -1; bool checking; string bestNote;
         // окно тянется, только если кнопку мыши нажали на пустом месте
         Point dragFrom; bool dragging;
@@ -478,6 +502,7 @@ namespace HbAi.XboxDns
 
         public MainForm()
         {
+            Dns.LoadCustom();
             LoadFonts();
             Text = "HB AI · Smart DNS";
             FormBorderStyle = FormBorderStyle.None;
@@ -837,8 +862,9 @@ namespace HbAi.XboxDns
         void OnDown(object s, MouseEventArgs e)
         {
             dragging = false;
-            if (e.Button != MouseButtons.Left) return;
             var lp = ToLogical(e.Location);
+            if (e.Button == MouseButtons.Right && new Rectangle(28, 500, LW - 56, 56).Contains(lp)) { AddCustomDns(); return; }
+            if (e.Button != MouseButtons.Left) return;
             if (rClose.Contains(lp)) { Close(); return; }
             if (rMin.Contains(lp)) { WindowState = FormWindowState.Minimized; return; }
             if (rGroup.Contains(lp)) { Open("https://vk.com/neiroseti_ai"); return; }
@@ -852,6 +878,29 @@ namespace HbAi.XboxDns
             if (rBest.Contains(lp)) { RunBest(); return; }
             dragging = true;
             dragFrom = e.Location;
+        }
+
+        void AddCustomDns()
+        {
+            using (var f = new Form { Text = "Добавить свой DNS", Width = 430, Height = 265, StartPosition = FormStartPosition.CenterParent, FormBorderStyle = FormBorderStyle.FixedDialog, MaximizeBox = false, MinimizeBox = false })
+            {
+                var name = Field(f, "Название", "Мой DNS", 15); var v4 = Field(f, "IPv4 (через запятую)", "1.1.1.1, 1.0.0.1", 55);
+                var v6 = Field(f, "IPv6 (необязательно)", "", 95); var site = Field(f, "Сайт (необязательно)", "example.com", 135);
+                var hint = new Label { Text = "ПКМ по списку DNS — добавить ещё один набор", AutoSize = true, Left = 15, Top = 175, ForeColor = Color.DimGray };
+                var ok = new Button { Text = "Добавить", DialogResult = DialogResult.OK, Left = 235, Top = 200, Width = 80 }; var cancel = new Button { Text = "Отмена", DialogResult = DialogResult.Cancel, Left = 325, Top = 200, Width = 75 };
+                f.Controls.AddRange(new Control[] { hint, ok, cancel }); f.AcceptButton = ok; f.CancelButton = cancel;
+                if (f.ShowDialog(this) != DialogResult.OK) return;
+                var a4 = v4.Text.Split(',').Select(x => x.Trim()).Where(x => x.Length > 0).ToArray();
+                var a6 = v6.Text.Split(',').Select(x => x.Trim()).Where(x => x.Length > 0).ToArray();
+                if (name.Text.Trim().Length == 0 || a4.Length == 0) { MessageBox.Show(this, "Укажите название и хотя бы один IPv4-адрес.", "DNS", MessageBoxButtons.OK, MessageBoxIcon.Warning); return; }
+                Dns.SaveCustom(name.Text, a4, a6, site.Text); MessageBox.Show(this, "DNS добавлен. Перезапустите приложение, чтобы он появился в списке.", "DNS", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
+        }
+
+        static TextBox Field(Form f, string label, string value, int top)
+        {
+            f.Controls.Add(new Label { Text = label, Left = 15, Top = top + 4, Width = 140 });
+            var t = new TextBox { Text = value, Left = 160, Top = top, Width = 240 }; f.Controls.Add(t); return t;
         }
 
         void OnMove(object s, MouseEventArgs e)
